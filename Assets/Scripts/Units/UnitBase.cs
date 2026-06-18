@@ -11,6 +11,8 @@ public class UnitBase
     public UnitStatus OwnUnitStatus;
 
     public UnitMove OwnUnitMove;
+
+    public UnitBattle OwnUnitBattle { get; private set; }
     
     public static event Action moveEvent;
 

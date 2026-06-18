@@ -25,4 +25,6 @@ public enum StatuType
     Mp,
     Atk,
     Spd,
+    currentSpd,
+    currentAC,
 }

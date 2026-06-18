@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using Unity.VisualScripting;
@@ -15,6 +16,16 @@ public class UnitBattle : UnitLogicBase
         battleStatus = new Dictionary<StatuType, string>(ownerUnit.OwnUnitStatus.allStatus);
 
         UnitBase.moveEvent += OnMove;
+    }
+
+    public T GetValue<T>(StatuType type)
+    {
+        return PublicFunctions.GetValueFromDict<T, StatuType>(battleStatus, type);
+    }
+
+    public void ChangeValue<T>(StatuType type,T value)
+    {
+        PublicFunctions.ChangeValueForDict<StatuType,T>(battleStatus,type,value);
     }
 
     public void OnMove()
