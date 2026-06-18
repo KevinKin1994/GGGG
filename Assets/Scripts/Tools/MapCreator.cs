@@ -30,16 +30,17 @@ public class MapCreator : MonoBehaviour
     private Canvas canvas;
     private Camera uiCamera;
 
+    private Map map;
+
     void Start()
     {
-        canvas = GetComponentInParent<Canvas>();
-        canvasRectTransform = canvas == null ? transform as RectTransform : canvas.transform as RectTransform;
-        uiCamera = canvas != null && canvas.renderMode != RenderMode.ScreenSpaceOverlay ? canvas.worldCamera : null;
-
         if (gridRoot == null)
         {
             gridRoot = transform as RectTransform;
+            map = gridRoot.gameObject.AddComponent<Map>();
         }
+
+        InitializeCanvasContext();
 
         RegisterBrushSprites();
         BindButtons();
@@ -60,22 +61,19 @@ public class MapCreator : MonoBehaviour
 
     public void PaintAtMousePosition()
     {
-        if (grid == null || canvasRectTransform == null)
+        if (grid == null)
         {
             return;
         }
 
-        if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(
-                canvasRectTransform,
+        if (!MapTranslator.TryScreenToMapPosition(
                 Input.mousePosition,
+                canvasRectTransform,
                 uiCamera,
-                out Vector2 localPosition))
-        {
-            return;
-        }
-
-        Vector2Int mapPosition = LocalToMapPosition(localPosition);
-        if (!IsInsideMap(mapPosition))
+                mapSideLength,
+                gridSize,
+                transparentPadding,
+                out Vector2Int mapPosition))
         {
             return;
         }
@@ -136,7 +134,10 @@ public class MapCreator : MonoBehaviour
             gridSize = new Vector2(saveData.gridHeight, saveData.gridHeight);
         }
 
-        transparentPadding = saveData.transparentPadding;
+        if (saveData.transparentPadding != Vector4.zero)
+        {
+            transparentPadding = saveData.transparentPadding;
+        }
 
         if (saveData.grids == null)
         {
@@ -159,8 +160,19 @@ public class MapCreator : MonoBehaviour
         {
             if (image != null)
             {
+                MapGrid mapGrid = image.GetComponent<MapGrid>();
+                if (MapSystem.Instance != null)
+                {
+                    map.UnregisterGrid(mapGrid);
+                }
+
                 Destroy(image.gameObject);
             }
+        }
+
+        if (MapSystem.Instance != null)
+        {
+            map.ClearGrids();
         }
 
         gridImages.Clear();
@@ -215,8 +227,23 @@ public class MapCreator : MonoBehaviour
             rectTransform.anchorMin = new Vector2(0.5f, 0.5f);
             rectTransform.anchorMax = new Vector2(0.5f, 0.5f);
             rectTransform.pivot = new Vector2(0.5f, 0.5f);
-            rectTransform.anchoredPosition = MapToLocalPosition(mapPosition);
+            rectTransform.anchoredPosition = MapTranslator.MapToLocalPosition(
+                mapPosition,
+                gridSize,
+                transparentPadding);
             rectTransform.sizeDelta = gridSize;
+        }
+
+        MapGrid mapGrid = gridObject.GetComponent<MapGrid>();
+        if (mapGrid == null)
+        {
+            mapGrid = gridObject.AddComponent<MapGrid>();
+        }
+
+        mapGrid.SetPosition(mapPosition.x, mapPosition.y);
+        if (MapSystem.Instance != null)
+        {
+            map.RegisterGrid(mapGrid);
         }
 
         Image image = gridObject.GetComponent<Image>();
@@ -234,76 +261,6 @@ public class MapCreator : MonoBehaviour
 
         image.sprite = sprite;
         RegisterSprite(sprite);
-    }
-
-    private Vector2 MapToLocalPosition(Vector2Int mapPosition)
-    {
-        Vector2 effectiveSize = GetEffectiveGridSize();
-        float x = effectiveSize.x * (mapPosition.x + mapPosition.y * 0.5f);
-        float y = effectiveSize.y * 0.75f * mapPosition.y;
-        return new Vector2(x, y) - GetContentCenterOffset();
-    }
-
-    private Vector2Int LocalToMapPosition(Vector2 localPosition)
-    {
-        Vector2 effectiveSize = GetEffectiveGridSize();
-        Vector2 contentPosition = localPosition + GetContentCenterOffset();
-        float r = contentPosition.y / (effectiveSize.y * 0.75f);
-        float q = contentPosition.x / effectiveSize.x - r * 0.5f;
-        return AxialRound(q, r);
-    }
-
-    private Vector2Int AxialRound(float q, float r)
-    {
-        float x = q;
-        float z = r;
-        float y = -x - z;
-
-        int roundedX = Mathf.RoundToInt(x);
-        int roundedY = Mathf.RoundToInt(y);
-        int roundedZ = Mathf.RoundToInt(z);
-
-        float xDiff = Mathf.Abs(roundedX - x);
-        float yDiff = Mathf.Abs(roundedY - y);
-        float zDiff = Mathf.Abs(roundedZ - z);
-
-        if (xDiff > yDiff && xDiff > zDiff)
-        {
-            roundedX = -roundedY - roundedZ;
-        }
-        else if (yDiff > zDiff)
-        {
-            roundedY = -roundedX - roundedZ;
-        }
-        else
-        {
-            roundedZ = -roundedX - roundedY;
-        }
-
-        return new Vector2Int(roundedX, roundedZ);
-    }
-
-    private bool IsInsideMap(Vector2Int mapPosition)
-    {
-        int radius = Mathf.Max(0, mapSideLength - 1);
-        int s = -mapPosition.x - mapPosition.y;
-        return Mathf.Abs(mapPosition.x) <= radius
-               && Mathf.Abs(mapPosition.y) <= radius
-               && Mathf.Abs(s) <= radius;
-    }
-
-    private Vector2 GetEffectiveGridSize()
-    {
-        float width = gridSize.x - transparentPadding.x - transparentPadding.z;
-        float height = gridSize.y - transparentPadding.y - transparentPadding.w;
-        return new Vector2(Mathf.Max(1f, width), Mathf.Max(1f, height));
-    }
-
-    private Vector2 GetContentCenterOffset()
-    {
-        float x = (transparentPadding.x - transparentPadding.z) * 0.5f;
-        float y = (transparentPadding.w - transparentPadding.y) * 0.5f;
-        return new Vector2(x, y);
     }
 
     private void SortGridLayers()
@@ -337,6 +294,30 @@ public class MapCreator : MonoBehaviour
     private string GetSavePath()
     {
         return Path.Combine(Application.persistentDataPath, saveFileName);
+    }
+
+    private void InitializeCanvasContext()
+    {
+        canvas = GetComponentInParent<Canvas>();
+        canvasRectTransform = canvas == null ? transform as RectTransform : canvas.transform as RectTransform;
+        uiCamera = canvas != null && canvas.renderMode != RenderMode.ScreenSpaceOverlay ? canvas.worldCamera : null;
+    }
+
+    public bool TryMouseToMapPosition(out Vector2Int mapPosition)
+    {
+        if (canvasRectTransform == null)
+        {
+            InitializeCanvasContext();
+        }
+
+        return MapTranslator.TryScreenToMapPosition(
+            Input.mousePosition,
+            canvasRectTransform,
+            uiCamera,
+            mapSideLength,
+            gridSize,
+            transparentPadding,
+            out mapPosition);
     }
 
     private void BindButtons()
